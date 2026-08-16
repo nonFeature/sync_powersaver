@@ -1,0 +1,7 @@
+__id__ = "<plugin_id>"
+__name__ = "<Plugin Name>"
+__description__ = "<description>"
+__icon__ = "feature_plugins/0"
+__version__ = "1.0"
+__min_version__ = "12.1.1"
+__author__ = "@your_tag"
