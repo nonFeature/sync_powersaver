@@ -1,26 +1,74 @@
 import argparse
 import ast
+import base64
+import hashlib
+import os
 import re
 import subprocess
 import sys
+import urllib.request
+import zipfile
 from collections import defaultdict
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).parent.resolve()
 DIST_DIR = SCRIPT_DIR / "dist"
 ROOT_DIST_DIR = SCRIPT_DIR.parent.parent
-OUTPUT_FILENAME = "template.plugin"
 SRC_DIR = SCRIPT_DIR
 HEADER_FILE = SRC_DIR / "header.py"
 
+
+def get_plugin_id() -> str:
+    try:
+        content = HEADER_FILE.read_text(encoding="utf-8")
+        match = re.search(r'__id__\s*=\s*"([^"]+)"', content)
+        return match.group(1) if match else "template"
+    except Exception:
+        return "template"
+
+
+OUTPUT_FILENAME = f"{get_plugin_id()}.plugin"
+
 PRIORITY_FILES = ["header.py"]
-PRIORITY_DIRS = ["data", "i18n", "utils", "features", "ui"]
+PRIORITY_DIRS = ["data", "i18n", "utils", "features"]
 LAST_FILES = ["main.py"]
 
-INTERNAL_MODULES = ("data", "i18n", "utils", "features", "ui", "header")
+INTERNAL_MODULES = ("data", "i18n", "utils", "features", "header")
 
 captured_imports = defaultdict(set)
 captured_from_imports = defaultdict(set)
+
+COPYRIGHT_STRING = "# Powersaver Sync plugin for exteraGram / Ayugram\n# Plugin by @nonPlugins\n"
+
+HEADER_WATERMARK = """
+#          @@@@@@@@@@
+#        @@@@@@@@@@@@
+#       @@@@@
+#       @@@@
+# @@@@@@@@@@@@@@@@@@@
+# @@@@@@@@@@@@@@@@@@@
+#       @@@@
+#       @@@@
+#       @@@@
+#       @@@@
+#       @@@@
+#       @@@@
+# @@@@@@@@@@@@@@@@@@@
+# @@@@@@@@@@@@@@@@@@@
+"""
+
+FOOTER_WATERMARK = """
+#       @@@@
+# @@@@@@@@@@@@@@@@
+# @@@@@@@@@@@@@@@@
+# @@@@@@@@@@@@@@@@
+# @@@@@@@@@@@@@@@
+# @@@@@@@@@@@@@@@
+# @@@@@@@@@@@@@@@
+# @@@@@@@@@@@@@@@@
+# @@@@@@@@@@@@@@@@
+# @@@@@@@@@@@@@@@@
+"""
 
 
 def parse_args():
@@ -255,8 +303,123 @@ class ASTMinifier(ast.NodeTransformer):
         return node
 
 
+def check_java():
+    try:
+        subprocess.run(["java", "-version"], check=True, capture_output=True)
+        return "java"
+    except Exception:
+        pass
+
+    java_home = os.environ.get("JAVA_HOME")
+    if java_home:
+        java_exe = Path(java_home) / "bin" / ("java.exe" if os.name == "nt" else "java")
+        if java_exe.exists():
+            return str(java_exe)
+
+    return None
+
+
+def download_tools():
+    tools_dir = SCRIPT_DIR / ".tools"
+    tools_dir.mkdir(exist_ok=True)
+
+    kotlinc_dir = tools_dir / "kotlinc"
+    if not kotlinc_dir.exists():
+        print("Downloading Kotlin Compiler...")
+        kt_zip = tools_dir / "kotlinc.zip"
+        urllib.request.urlretrieve("https://github.com/JetBrains/kotlin/releases/download/v1.9.22/kotlin-compiler-1.9.22.zip", kt_zip)
+        print("Extracting Kotlin Compiler...")
+        with zipfile.ZipFile(kt_zip, "r") as zip_ref:
+            zip_ref.extractall(tools_dir)
+        kt_zip.unlink()
+
+    d8_jar = tools_dir / "d8.jar"
+    if not d8_jar.exists():
+        print("Downloading D8 (R8) compiler...")
+        urllib.request.urlretrieve("https://dl.google.com/dl/android/maven2/com/android/tools/r8/8.2.33/r8-8.2.33.jar", d8_jar)
+
+    android_jar = tools_dir / "android.jar"
+    if not android_jar.exists():
+        print("Downloading android.jar (API 33)...")
+        urllib.request.urlretrieve("https://raw.githubusercontent.com/Sable/android-platforms/master/android-33/android.jar", android_jar)
+
+
+def compile_kotlin_to_dex():
+    kt_dir = SCRIPT_DIR / "kotlin"
+    if not kt_dir.exists():
+        return True
+
+    kt_files = list(kt_dir.glob("*.kt"))
+    if not kt_files:
+        return True
+
+    build_dir = SCRIPT_DIR / "build"
+    build_dir.mkdir(exist_ok=True)
+    hash_file = build_dir / "kt_hash.txt"
+    constants_file = SCRIPT_DIR / "data" / "constants.py"
+
+    current_hash = hashlib.md5(b"".join(f.read_bytes() for f in sorted(kt_files))).hexdigest()
+    if hash_file.exists() and constants_file.exists():
+        if hash_file.read_text(encoding="utf-8").strip() == current_hash:
+            print("Kotlin files unchanged. Skipping compilation.")
+            return True
+
+    java_exe = check_java()
+    if not java_exe:
+        print("Java is not installed or not in PATH. Cannot compile Kotlin.")
+        return False
+
+    download_tools()
+
+    tools_dir = SCRIPT_DIR / ".tools"
+    kotlinc_bin = tools_dir / "kotlinc" / "bin" / ("kotlinc.bat" if os.name == "nt" else "kotlinc")
+    android_jar = tools_dir / "android.jar"
+    d8_jar = tools_dir / "d8.jar"
+
+    print("Compiling Kotlin sources...")
+    jar_path = build_dir / "classes.jar"
+    kt_files_str = [str(p) for p in kt_files]
+
+    cmd_kotlinc = [str(kotlinc_bin), *kt_files_str, "-d", str(jar_path), "-classpath", str(android_jar)]
+
+    try:
+        subprocess.run(cmd_kotlinc, check=True)
+    except Exception as e:
+        print(f"Failed to compile Kotlin: {e}")
+        return False
+
+    print("Converting to DEX...")
+    cmd_d8 = [java_exe, "-cp", str(d8_jar), "com.android.tools.r8.D8", str(jar_path), "--output", str(build_dir), "--lib", str(android_jar)]
+    try:
+        subprocess.run(cmd_d8, check=True)
+    except Exception as e:
+        print(f"Failed to run d8: {e}")
+        return False
+
+    dex_path = build_dir / "classes.dex"
+    if not dex_path.exists():
+        print("classes.dex not found!")
+        return False
+
+    with open(dex_path, "rb") as f:
+        dex_b64 = base64.b64encode(f.read()).decode("utf-8")
+
+    constants_file = SCRIPT_DIR / "data" / "constants.py"
+    constants_file.parent.mkdir(exist_ok=True)
+    with open(constants_file, "w", encoding="utf-8") as f:
+        f.write(f'DEX_B64 = "{dex_b64}"  # noqa: E501\n')
+
+    hash_file.write_text(current_hash, encoding="utf-8")
+
+    print("Injected DEX into constants.py.")
+    return True
+
+
 def build():
     args = parse_args()
+
+    if not compile_kotlin_to_dex():
+        sys.exit(1)
 
     if not HEADER_FILE.exists():
         print(f"Header file '{HEADER_FILE}' not found!")
@@ -324,6 +487,8 @@ def build():
                     full_code = ast.unparse(minified_tree)
                 except Exception:
                     full_code = combined_code
+
+    full_code = HEADER_WATERMARK + "\n" + COPYRIGHT_STRING + "\n" + full_code + "\n\n" + FOOTER_WATERMARK
 
     newline = "\r\n" if args.crlf else "\n"
     DIST_DIR.mkdir(exist_ok=True)
