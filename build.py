@@ -38,7 +38,7 @@ INTERNAL_MODULES = ("data", "i18n", "utils", "features", "header")
 captured_imports = defaultdict(set)
 captured_from_imports = defaultdict(set)
 
-COPYRIGHT_STRING = "# Powersaver Sync plugin for exteraGram / Ayugram\n# Plugin by @nonPlugins\n"
+COPYRIGHT_STRING = "# Powersaver Sync plugin for exteraGram / Ayugram"
 
 HEADER_WATERMARK = """
 #          @@@@@@@@@@
@@ -55,6 +55,8 @@ HEADER_WATERMARK = """
 #       @@@@
 # @@@@@@@@@@@@@@@@@@@
 # @@@@@@@@@@@@@@@@@@@
+
+# Plugin by @nonPlugins\n# https://github.com/nonFeature/sync_powersaver
 """
 
 FOOTER_WATERMARK = """
