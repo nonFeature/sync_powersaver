@@ -22,7 +22,11 @@ class PowerSaveReceiver : BroadcastReceiver() {
                     addAction("miui.intent.action.POWER_SAVE_MODE_CHANGED")
                     addAction("huawei.intent.action.POWER_MODE_CHANGED_ACTION")
                 }
-                context.registerReceiver(instance, filter)
+                if (Build.VERSION.SDK_INT >= 33) {
+                    context.registerReceiver(instance, filter, 2)
+                } else {
+                    context.registerReceiver(instance, filter)
+                }
                 instance?.updatePowerSaveState(context)
             }
         }
@@ -45,17 +49,56 @@ class PowerSaveReceiver : BroadcastReceiver() {
         }
     }
 
+    private fun isPowerSaveModeActive(context: Context, powerManager: PowerManager): Boolean {
+        if (powerManager.isPowerSaveMode) {
+            return true
+        }
+        
+        val resolver = context.contentResolver
+        
+        try {
+            val miuiPowerSave = android.provider.Settings.System.getInt(resolver, "POWER_SAVE_MODE_OPEN")
+            if (miuiPowerSave == 1) return true
+        } catch (e: android.provider.Settings.SettingNotFoundException) {}
+        
+        try {
+            val huaweiPowerSave = android.provider.Settings.System.getInt(resolver, "SmartModeStatus")
+            if (huaweiPowerSave == 4 || huaweiPowerSave == 1) return true
+        } catch (e: android.provider.Settings.SettingNotFoundException) {}
+        
+        try {
+            val samsungPowerSave = android.provider.Settings.System.getString(resolver, "psm_switch")
+            if (samsungPowerSave == "1") return true
+        } catch (e: Exception) {}
+
+        try {
+            val globalPowerSave = android.provider.Settings.Global.getInt(resolver, "low_power")
+            if (globalPowerSave == 1) return true
+        } catch (e: android.provider.Settings.SettingNotFoundException) {}
+        
+        return false
+    }
+
     private fun updatePowerSaveState(context: Context) {
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
                 val powerManager = context.getSystemService(Context.POWER_SERVICE) as? PowerManager ?: return
-                val isPowerSaveMode = powerManager.isPowerSaveMode
+                val isPowerSaveMode = isPowerSaveModeActive(context, powerManager)
 
                 val liteModeClass = Class.forName("org.telegram.messenger.LiteMode")
                 try {
-                    val setLevelMethod = liteModeClass.getDeclaredMethod("setPowerSaverLevel", Integer.TYPE)
-                    setLevelMethod.isAccessible = true
-                    setLevelMethod.invoke(null, if (isPowerSaveMode) 100 else 0)
+                    val field = liteModeClass.getDeclaredField("powerSaverLevel")
+                    field.isAccessible = true
+                    
+                    if (isPowerSaveMode) {
+                        field.setInt(null, 100)
+                    } else {
+                        field.setInt(null, 0)
+                    }
+                    
+                    val getValueMethod = liteModeClass.getDeclaredMethod("getValue")
+                    getValueMethod.isAccessible = true
+                    getValueMethod.invoke(null)
                 } catch (e: Exception) {
                     e.printStackTrace()
                 }

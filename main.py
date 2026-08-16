@@ -8,7 +8,7 @@ from hook_utils import find_class
 from java.nio import ByteBuffer
 from ui.alert import AlertDialogBuilder
 
-from data.constants import DEX_B64
+from data.constants import DEX_B64, DEX_HASH
 from header import __id__
 from i18n.locales import _s
 from utils.helpers import get_client_version_tuple
@@ -84,6 +84,12 @@ class Plugin(BasePlugin):
                 return
 
             dex_bytes = base64.b64decode(DEX_B64)
+            import hashlib
+
+            if hashlib.sha256(dex_bytes).hexdigest() != DEX_HASH:
+                self.log("[SystemPowersaver] Security Error: DEX hash mismatch! Payload tampered.")
+                return
+
             dex_buffer = ByteBuffer.wrap(dex_bytes)
             parent_cl = context.getClassLoader()
             class_loader = InMemoryDexClassLoader(dex_buffer, parent_cl)

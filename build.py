@@ -346,7 +346,7 @@ def download_tools():
         urllib.request.urlretrieve("https://raw.githubusercontent.com/Sable/android-platforms/master/android-33/android.jar", android_jar)
 
 
-def compile_kotlin_to_dex():
+def compile_kotlin_to_dex(minify=False):
     kt_dir = SCRIPT_DIR / "kotlin"
     if not kt_dir.exists():
         return True
@@ -360,7 +360,8 @@ def compile_kotlin_to_dex():
     hash_file = build_dir / "kt_hash.txt"
     constants_file = SCRIPT_DIR / "data" / "constants.py"
 
-    current_hash = hashlib.md5(b"".join(f.read_bytes() for f in sorted(kt_files))).hexdigest()
+    hash_content = b"".join(f.read_bytes() for f in sorted(kt_files)) + str(minify).encode("utf-8")
+    current_hash = hashlib.md5(hash_content).hexdigest()
     if hash_file.exists() and constants_file.exists():
         if hash_file.read_text(encoding="utf-8").strip() == current_hash:
             print("Kotlin files unchanged. Skipping compilation.")
@@ -368,7 +369,7 @@ def compile_kotlin_to_dex():
 
     java_exe = check_java()
     if not java_exe:
-        print("Java is not installed or not in PATH. Cannot compile Kotlin.")
+        print("Java is required to compile Kotlin files. Please install Java and add it to PATH.")
         return False
 
     download_tools()
@@ -392,6 +393,9 @@ def compile_kotlin_to_dex():
 
     print("Converting to DEX...")
     cmd_d8 = [java_exe, "-cp", str(d8_jar), "com.android.tools.r8.D8", str(jar_path), "--output", str(build_dir), "--lib", str(android_jar)]
+    if minify:
+        cmd_d8.append("--release")
+
     try:
         subprocess.run(cmd_d8, check=True)
     except Exception as e:
@@ -404,12 +408,15 @@ def compile_kotlin_to_dex():
         return False
 
     with open(dex_path, "rb") as f:
-        dex_b64 = base64.b64encode(f.read()).decode("utf-8")
+        dex_bytes = f.read()
+        dex_b64 = base64.b64encode(dex_bytes).decode("utf-8")
+        dex_hash = hashlib.sha256(dex_bytes).hexdigest()
 
     constants_file = SCRIPT_DIR / "data" / "constants.py"
     constants_file.parent.mkdir(exist_ok=True)
     with open(constants_file, "w", encoding="utf-8") as f:
         f.write(f'DEX_B64 = "{dex_b64}"  # noqa: E501\n')
+        f.write(f'DEX_HASH = "{dex_hash}"\n')
 
     hash_file.write_text(current_hash, encoding="utf-8")
 
@@ -420,7 +427,7 @@ def compile_kotlin_to_dex():
 def build():
     args = parse_args()
 
-    if not compile_kotlin_to_dex():
+    if not compile_kotlin_to_dex(minify=not args.no_minify):
         sys.exit(1)
 
     if not HEADER_FILE.exists():
