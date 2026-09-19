@@ -11,7 +11,7 @@ from ui.alert import AlertDialogBuilder
 from data.constants import DEX_B64, DEX_HASH
 from header import __id__
 from i18n.locales import _s
-from utils.helpers import get_client_version_tuple
+from utils.helpers import has_native_power_saver
 
 
 class Plugin(BasePlugin):
@@ -20,7 +20,8 @@ class Plugin(BasePlugin):
         self.receiver_class = None
 
     def on_plugin_load(self):
-        if get_client_version_tuple() >= (12, 6, 0):
+        if has_native_power_saver():
+            self.log("[SystemPowersaver] follow-system toggle detected (12.6.4+), plugin is obsolete")
             msg = _s("plugin_obsolete")
             self.log(f"[SystemPowersaver] {msg}")
 
